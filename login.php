@@ -11,6 +11,9 @@ if (isset($_SESSION['usuario_id'])) {
     exit();
 }
 
+// Incluye tu archivo de conexión a la base de datos
+include 'conexion.php'; // <--- AÑADIDO ESTO
+
 $error = ''; // Inicializa la variable de error
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -19,35 +22,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $email = filter_var($email, FILTER_SANITIZE_EMAIL);
 
-    $conexion = new mysqli("localhost", "root", "", "agencia");
+    // No necesitas la conexión de mysqli aquí, ya la tienes de include 'conexion.php';
+    // if ($conexion->connect_error) { ... } // Esto se maneja en conexion.php
 
-    if ($conexion->connect_error) {
-        die("Conexión fallida: " . $conexion->connect_error);
-    }
+    // Preparar la consulta usando $conn (la variable de tu conexion.php)
+    $stmt = mysqli_prepare($conn, "SELECT ID_Usuario, nombre, rol, contra FROM usuario WHERE email = ?"); // <--- USANDO $conn
+    mysqli_stmt_bind_param($stmt, "s", $email); // <--- USANDO mysqli_stmt_bind_param
+    mysqli_stmt_execute($stmt); // <--- USANDO mysqli_stmt_execute
+    mysqli_stmt_store_result($stmt); // <--- USANDO mysqli_stmt_store_result
 
-    $stmt = $conexion->prepare("SELECT ID_Usuario, nombre, rol, contra FROM usuario WHERE email = ?");
-    $stmt->bind_param("s", $email);
-    $stmt->execute();
-    $stmt->store_result();
-
-    if ($stmt->num_rows === 1) {
-        $stmt->bind_result($id_usuario, $nombre_usuario, $rol_usuario, $hash_contrasena);
-        $stmt->fetch();
+    if (mysqli_stmt_num_rows($stmt) === 1) { // <--- USANDO mysqli_stmt_num_rows
+        mysqli_stmt_bind_result($stmt, $id_usuario, $nombre_usuario, $rol_usuario, $hash_contrasena); // <--- USANDO mysqli_stmt_bind_result
+        mysqli_stmt_fetch($stmt); // <--- USANDO mysqli_stmt_fetch
 
         if (password_verify($contra, $hash_contrasena)) {
             $_SESSION['usuario_id'] = $id_usuario;
             $_SESSION['usuario_nombre'] = $nombre_usuario;
             $_SESSION['usuario_rol'] = $rol_usuario; // Guardamos el rol del usuario
 
-            // --- BLOQUE DE REDIRECCIÓN REAL (DESCOMENTADO) ---
             if ($_SESSION['usuario_rol'] === 'admin') {
                 header("Location: gestion_pedidos.php"); // Redirige a los administradores
             } else {
                 header("Location: index.php"); // Redirige a los usuarios normales
             }
             exit(); // ¡Importante!
-            // --- FIN BLOQUE DE REDIRECCIÓN ---
-
         } else {
             $error = "Email o contraseña incorrectos.";
         }
@@ -55,9 +53,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Email o contraseña incorrectos.";
     }
 
-    $stmt->close();
-    $conexion->close();
+    mysqli_stmt_close($stmt); // <--- USANDO mysqli_stmt_close
 }
+
+mysqli_close($conn); // <--- IMPORTANTE: Cierra la conexión al final del script
 ?>
 
 <!DOCTYPE html>

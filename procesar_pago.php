@@ -7,16 +7,13 @@ if (!isset($_SESSION['usuario_id']) || (isset($_SESSION['usuario_rol']) && $_SES
     exit();
 }
 
-// Conexión a base de datos
-$conexion = new mysqli("localhost", "root", "", "agencia");
-if ($conexion->connect_error) {
-    die("Conexión fallida: " . $conexion->connect_error);
-}
+// Incluye tu archivo de conexión a la base de datos
+include 'conexion.php'; // <--- AÑADIDO ESTO (Ahora $conn está disponible)
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. Simulación de procesamiento de pago (falso)
     // En un entorno real, aquí se integrarían con una pasarela de pago real.
-    sleep(1); // Simular un pequeño retraso de procesamiento
+    // sleep(1); // Simular un pequeño retraso de procesamiento (descomentar para probar)
 
     // Asumimos que el pago "siempre es exitoso" para esta simulación
     $pago_exitoso = true; 
@@ -35,47 +32,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // 3. Iniciar una transacción para asegurar la integridad de los datos
-        $conexion->begin_transaction();
-        $pedido_creado_exitosamente = false;
+        mysqli_begin_transaction($conn); // <--- USANDO mysqli_begin_transaction
 
         try {
             // 4. Insertar el nuevo pedido en la tabla 'pedidos'
             $fecha_actual = date('Y-m-d H:i:s');
             $estado_inicial = 'Pendiente'; // Estado inicial del pedido
 
-            $stmt_pedido = $conexion->prepare("INSERT INTO pedidos (ID_Usuario, Fecha, Estado, Total) VALUES (?, ?, ?, ?)");
-            $stmt_pedido->bind_param("isss", $usuario_id, $fecha_actual, $estado_inicial, $total_carrito);
+            $stmt_pedido = mysqli_prepare($conn, "INSERT INTO pedidos (ID_Usuario, Fecha, Estado, Total) VALUES (?, ?, ?, ?)"); // <--- USANDO mysqli_prepare
             
-            if (!$stmt_pedido->execute()) {
-                throw new Exception("Error al crear el pedido principal: " . $stmt_pedido->error);
+            if ($stmt_pedido === false) {
+                throw new Exception("Error al preparar el statement del pedido: " . mysqli_error($conn));
             }
-            $pedido_id = $stmt_pedido->insert_id; // Obtener el ID del pedido recién insertado
-            $stmt_pedido->close();
+
+            mysqli_stmt_bind_param($stmt_pedido, "isss", $usuario_id, $fecha_actual, $estado_inicial, $total_carrito); // <--- USANDO mysqli_stmt_bind_param
+            
+            if (!mysqli_stmt_execute($stmt_pedido)) { // <--- USANDO mysqli_stmt_execute
+                throw new Exception("Error al crear el pedido principal: " . mysqli_stmt_error($stmt_pedido)); // <--- USANDO mysqli_stmt_error
+            }
+            $pedido_id = mysqli_stmt_insert_id($stmt_pedido); // <--- USANDO mysqli_stmt_insert_id
+            mysqli_stmt_close($stmt_pedido); // <--- USANDO mysqli_stmt_close
 
             // 5. Insertar los detalles del pedido en 'pedido_detalles'
-            foreach ($carrito as $id_paquete => $item) {
-                $cantidad = $item['cantidad'];
-                // Obtener el precio unitario del paquete de la base de datos para mayor seguridad
-                $stmt_precio = $conexion->prepare("SELECT precio FROM paquetes WHERE ID_Reserva = ?");
-                $stmt_precio->bind_param("i", $id_paquete);
-                $stmt_precio->execute();
-                $res_precio = $stmt_precio->get_result();
-                $fila_precio = $res_precio->fetch_assoc();
-                $precio_unitario = $fila_precio['precio'];
-                $stmt_precio->close();
-
-                $stmt_detalle = $conexion->prepare("INSERT INTO pedido_detalles (ID_Pedido, ID_Reserva, Cantidad, Precio_Unitario_Al_Comprar) VALUES (?, ?, ?, ?)");
-                $stmt_detalle->bind_param("iiid", $pedido_id, $id_paquete, $cantidad, $precio_unitario);
-                
-                if (!$stmt_detalle->execute()) {
-                    throw new Exception("Error al insertar detalle del pedido para paquete ID " . $id_paquete . ": " . $stmt_detalle->error);
-                }
-                $stmt_detalle->close();
+            $stmt_detalle = mysqli_prepare($conn, "INSERT INTO pedido_detalles (ID_Pedido, ID_Reserva, Cantidad, Precio_Unitario_Al_Comprar) VALUES (?, ?, ?, ?)");
+            if ($stmt_detalle === false) {
+                throw new Exception("Error al preparar el statement de detalles: " . mysqli_error($conn));
             }
 
+            foreach ($carrito as $id_paquete => $item) {
+                $cantidad = $item['cantidad'];
+                
+                // Obtener el precio unitario del paquete de la base de datos para mayor seguridad
+                $stmt_precio = mysqli_prepare($conn, "SELECT precio FROM paquetes WHERE ID_Reserva = ?");
+                if ($stmt_precio === false) {
+                    throw new Exception("Error al preparar el statement de precio: " . mysqli_error($conn));
+                }
+                mysqli_stmt_bind_param($stmt_precio, "i", $id_paquete);
+                mysqli_stmt_execute($stmt_precio);
+                $res_precio = mysqli_stmt_get_result($stmt_precio);
+                $fila_precio = mysqli_fetch_assoc($res_precio);
+                $precio_unitario = $fila_precio['precio'];
+                mysqli_stmt_close($stmt_precio);
+
+                mysqli_stmt_bind_param($stmt_detalle, "iiid", $pedido_id, $id_paquete, $cantidad, $precio_unitario);
+                
+                if (!mysqli_stmt_execute($stmt_detalle)) {
+                    throw new Exception("Error al insertar detalle del pedido para paquete ID " . $id_paquete . ": " . mysqli_stmt_error($stmt_detalle));
+                }
+            }
+            mysqli_stmt_close($stmt_detalle);
+
             // Si todo fue bien, confirmar la transacción
-            $conexion->commit();
-            $pedido_creado_exitosamente = true;
+            mysqli_commit($conn); // <--- USANDO mysqli_commit
 
             // 6. Vaciar el carrito de la sesión
             unset($_SESSION['carrito']);
@@ -87,15 +95,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } catch (Exception $e) {
             // Si algo falla, revertir la transacción
-            $conexion->rollback();
+            mysqli_rollback($conn); // <--- USANDO mysqli_rollback
             // Redirigir a la página de confirmación de error
             error_log("Error al procesar compra: " . $e->getMessage()); // Para depuración
+            $_SESSION['error_compra'] = "Hubo un error al procesar tu compra. Por favor, inténtalo de nuevo.";
             header("Location: confirmacion_compra.php?status=error");
             exit();
         }
 
     } else {
         // Redirigir a la página de confirmación de error (si el pago real fallara)
+        $_SESSION['error_compra'] = "El pago no pudo ser procesado. Por favor, inténtalo de nuevo o contacta a soporte.";
         header("Location: confirmacion_compra.php?status=error");
         exit();
     }
@@ -105,5 +115,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit();
 }
 
-$conexion->close();
+// Cierra la conexión a la base de datos al final del script si no se ha salido ya
+mysqli_close($conn); 
 ?>

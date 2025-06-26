@@ -9,11 +9,7 @@ if (!isset($_SESSION['usuario_id']) || $_SESSION['usuario_rol'] !== 'admin') {
 }
 
 // 2. Conexión a la base de datos
-$conexion = new mysqli("localhost", "root", "", "agencia");
-
-if ($conexion->connect_error) {
-    die("Conexión fallida: " . $conexion->connect_error);
-}
+include 'conexion.php'; // <--- AÑADIDO ESTO (Ahora $conn está disponible)
 
 $pedido_id = null;
 $pedido = null;
@@ -31,17 +27,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pedido_id']) && isset
     if (!in_array($nuevo_estado, $estados_validos)) {
         $mensaje = '<div class="alert alert-danger" role="alert">Estado no válido.</div>';
     } else {
-        $stmt_update = $conexion->prepare("UPDATE pedidos SET Estado = ? WHERE ID_Pedido = ?");
-        $stmt_update->bind_param("si", $nuevo_estado, $pedido_id_a_actualizar);
+        // Preparar y ejecutar la consulta de actualización usando $conn
+        $stmt_update = mysqli_prepare($conn, "UPDATE pedidos SET Estado = ? WHERE ID_Pedido = ?"); // <--- USANDO $conn
+        mysqli_stmt_bind_param($stmt_update, "si", $nuevo_estado, $pedido_id_a_actualizar); // <--- USANDO mysqli_stmt_bind_param
 
-        if ($stmt_update->execute()) {
+        if (mysqli_stmt_execute($stmt_update)) { // <--- USANDO mysqli_stmt_execute
             $mensaje = '<div class="alert alert-success" role="alert">Estado del pedido actualizado correctamente a <strong>' . htmlspecialchars($nuevo_estado) . '</strong>.</div>';
             // Vuelve a cargar el pedido para mostrar el estado actualizado
             $pedido_id = $pedido_id_a_actualizar; // Asegura que se cargue el ID correcto
         } else {
-            $mensaje = '<div class="alert alert-danger" role="alert">Error al actualizar el estado del pedido: ' . htmlspecialchars($stmt_update->error) . '</div>';
+            $mensaje = '<div class="alert alert-danger" role="alert">Error al actualizar el estado del pedido: ' . htmlspecialchars(mysqli_error($conn)) . '</div>'; // <--- USANDO mysqli_error($conn)
         }
-        $stmt_update->close();
+        mysqli_stmt_close($stmt_update); // <--- USANDO mysqli_stmt_close
     }
 }
 
@@ -53,8 +50,8 @@ if (isset($_GET['id'])) {
 }
 
 if ($pedido_id) {
-    // Consulta para obtener los detalles del pedido principal
-    $stmt_pedido = $conexion->prepare("
+    // Consulta para obtener los detalles del pedido principal usando $conn
+    $stmt_pedido = mysqli_prepare($conn, "
         SELECT 
             p.ID_Pedido,
             p.Fecha,
@@ -68,16 +65,16 @@ if ($pedido_id) {
             usuario u ON p.ID_Usuario = u.ID_Usuario
         WHERE 
             p.ID_Pedido = ?;
-    ");
-    $stmt_pedido->bind_param("i", $pedido_id);
-    $stmt_pedido->execute();
-    $resultado_pedido = $stmt_pedido->get_result();
+    "); // <--- USANDO $conn
+    mysqli_stmt_bind_param($stmt_pedido, "i", $pedido_id); // <--- USANDO mysqli_stmt_bind_param
+    mysqli_stmt_execute($stmt_pedido); // <--- USANDO mysqli_stmt_execute
+    $resultado_pedido = mysqli_stmt_get_result($stmt_pedido); // <--- USANDO mysqli_stmt_get_result
 
-    if ($resultado_pedido->num_rows === 1) {
-        $pedido = $resultado_pedido->fetch_assoc();
+    if (mysqli_num_rows($resultado_pedido) === 1) { // <--- USANDO mysqli_num_rows
+        $pedido = mysqli_fetch_assoc($resultado_pedido); // <--- USANDO mysqli_fetch_assoc
 
-        // Consulta para obtener los detalles de los items dentro de este pedido
-        $stmt_detalles = $conexion->prepare("
+        // Consulta para obtener los detalles de los items dentro de este pedido usando $conn
+        $stmt_detalles = mysqli_prepare($conn, "
             SELECT 
                 pd.Cantidad,
                 pa.nombre AS nombre_paquete,
@@ -88,25 +85,25 @@ if ($pedido_id) {
                 paquetes pa ON pd.ID_Reserva = pa.ID_Reserva
             WHERE 
                 pd.ID_Pedido = ?;
-        ");
-        $stmt_detalles->bind_param("i", $pedido_id);
-        $stmt_detalles->execute();
-        $resultado_detalles = $stmt_detalles->get_result();
-        while ($detalle = $resultado_detalles->fetch_assoc()) {
+        "); // <--- USANDO $conn
+        mysqli_stmt_bind_param($stmt_detalles, "i", $pedido_id); // <--- USANDO mysqli_stmt_bind_param
+        mysqli_stmt_execute($stmt_detalles); // <--- USANDO mysqli_stmt_execute
+        $resultado_detalles = mysqli_stmt_get_result($stmt_detalles); // <--- USANDO mysqli_stmt_get_result
+        while ($detalle = mysqli_fetch_assoc($resultado_detalles)) { // <--- USANDO mysqli_fetch_assoc
             $detalles_pedido[] = $detalle;
         }
-        $stmt_detalles->close();
+        mysqli_stmt_close($stmt_detalles); // <--- USANDO mysqli_stmt_close
 
     } else {
         $mensaje = '<div class="alert alert-warning" role="alert">Pedido no encontrado.</div>';
         $pedido_id = null; // Reinicia el ID si el pedido no se encontró
     }
-    $stmt_pedido->close();
+    mysqli_stmt_close($stmt_pedido); // <--- USANDO mysqli_stmt_close
 } else {
     $mensaje = '<div class="alert alert-warning" role="alert">No se ha especificado un ID de pedido.</div>';
 }
 
-$conexion->close(); // Cierra la conexión a la base de datos
+mysqli_close($conn); // <--- Cierra la conexión a la base de datos al final del script
 ?>
 
 <!DOCTYPE html>

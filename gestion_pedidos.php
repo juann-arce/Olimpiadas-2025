@@ -9,18 +9,16 @@ if (!isset($_SESSION['usuario_id']) || $_SESSION['usuario_rol'] !== 'admin') {
 }
 
 // 2. Conexión a la base de datos
-$conexion = new mysqli("localhost", "root", "", "agencia");
-
-if ($conexion->connect_error) {
-    die("Conexión fallida: " . $conexion->connect_error);
-}
+include 'conexion.php'; // Ahora $conn está disponible
 
 // 3. Consulta para obtener todos los pedidos con información del usuario y detalles
+// MODIFICACIÓN: Se añade la cláusula WHERE para excluir pedidos con Estado 'Cancelado'
 $sql_pedidos = "
     SELECT 
         p.ID_Pedido,
         p.Fecha,
         p.Estado,
+        p.total, -- Asumiendo que la tabla pedidos tiene una columna 'total'
         u.nombre AS nombre_usuario,
         u.apellido AS apellido_usuario,
         u.email AS email_usuario
@@ -28,11 +26,13 @@ $sql_pedidos = "
         pedidos p
     JOIN 
         usuario u ON p.ID_Usuario = u.ID_Usuario
+    WHERE
+        p.Estado != 'Cancelado' -- <--- LÍNEA AÑADIDA PARA EXCLUIR PEDIDOS CANCELADOS
     ORDER BY 
         p.Fecha DESC;
 ";
 
-$resultado_pedidos = $conexion->query($sql_pedidos);
+$resultado_pedidos = mysqli_query($conn, $sql_pedidos);
 
 ?>
 
@@ -61,7 +61,8 @@ $resultado_pedidos = $conexion->query($sql_pedidos);
                     <?php if (isset($_SESSION['usuario_rol']) && $_SESSION['usuario_rol'] === 'admin'): ?>
                         <li class="nav-item"><a class="nav-link" href="agregar_paquete.php">Agregar Producto</a></li>
                         <li class="nav-item"><a class="nav-link" href="index.php">Inicio</a></li>
-                    <?php endif; ?>
+                        <li class="nav-item"><a class="nav-link" href="gestion_usuario.php">Gestión Usuarios</a></li>
+                        <li class="nav-item"><a class="nav-link" href="gestion_pedidos.php">Gestión Pedidos</a></li> <?php endif; ?>
                     <li class="nav-item"><a class="nav-link" href="logout.php">Cerrar Sesión</a></li>
                 </ul>
             </div>
@@ -71,24 +72,27 @@ $resultado_pedidos = $conexion->query($sql_pedidos);
     <div class="container">
         <h1 class="mb-4">Gestión de Pedidos</h1>
 
-        <?php if ($resultado_pedidos->num_rows > 0): ?>
+        <?php if (mysqli_num_rows($resultado_pedidos) > 0): ?>
             <table class="table table-striped table-bordered">
                 <thead class="table-dark">
                     <tr>
                         <th>ID Pedido</th>
                         <th>Fecha</th>
                         <th>Estado</th>
+                        <th>Total</th>
                         <th>Cliente</th>
                         <th>Email Cliente</th>
                         <th>Detalles del Pedido</th>
-                        <th>Acciones</th> </tr>
+                        <th>Acciones</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    <?php while ($pedido = $resultado_pedidos->fetch_assoc()): ?>
+                    <?php while ($pedido = mysqli_fetch_assoc($resultado_pedidos)): ?>
                         <tr>
                             <td><?php echo htmlspecialchars($pedido['ID_Pedido']); ?></td>
                             <td><?php echo htmlspecialchars($pedido['Fecha']); ?></td>
                             <td><?php echo htmlspecialchars($pedido['Estado']); ?></td>
+                            <td>$<?php echo number_format(htmlspecialchars($pedido['total']), 2, ',', '.'); ?></td>
                             <td><?php echo htmlspecialchars($pedido['nombre_usuario'] . ' ' . $pedido['apellido_usuario']); ?></td>
                             <td><?php echo htmlspecialchars($pedido['email_usuario']); ?></td>
                             <td>
@@ -107,22 +111,22 @@ $resultado_pedidos = $conexion->query($sql_pedidos);
                                         WHERE 
                                             pd.ID_Pedido = ?;
                                     ";
-                                    $stmt_detalles = $conexion->prepare($sql_detalles);
-                                    $stmt_detalles->bind_param("i", $pedido['ID_Pedido']);
-                                    $stmt_detalles->execute();
-                                    $resultado_detalles = $stmt_detalles->get_result();
+                                    $stmt_detalles = mysqli_prepare($conn, $sql_detalles);
+                                    mysqli_stmt_bind_param($stmt_detalles, "i", $pedido['ID_Pedido']);
+                                    mysqli_stmt_execute($stmt_detalles);
+                                    $resultado_detalles = mysqli_stmt_get_result($stmt_detalles);
 
-                                    while ($detalle = $resultado_detalles->fetch_assoc()):
+                                    while ($detalle = mysqli_fetch_assoc($resultado_detalles)):
                                     ?>
                                         <li>
-                                            <?php echo htmlspecialchars($detalle['nombre_paquete']); ?> (x<?php echo htmlspecialchars($detalle['Cantidad']); ?>) - $<?php echo number_format($detalle['precio_paquete'] * $detalle['Cantidad'], 2); ?>
+                                            <?php echo htmlspecialchars($detalle['nombre_paquete']); ?> (x<?php echo htmlspecialchars($detalle['Cantidad']); ?>) - $<?php echo number_format($detalle['precio_paquete'] * $detalle['Cantidad'], 2, ',', '.'); ?>
                                         </li>
                                     <?php endwhile; ?>
-                                    <?php $stmt_detalles->close(); ?>
+                                    <?php mysqli_stmt_close($stmt_detalles); ?>
                                 </ul>
                             </td>
                             <td>
-                                <a href="cambiar_estado_pedido.php?id=<?php echo $pedido['ID_Pedido']; ?>" class="btn btn-info btn-sm">Ver/Cambiar Estado</a>
+                                <a href="cambiar_estado_pedido.php?id=<?php echo htmlspecialchars($pedido['ID_Pedido']); ?>" class="btn btn-info btn-sm">Ver/Cambiar Estado</a>
                             </td>
                         </tr>
                     <?php endwhile; ?>
@@ -145,5 +149,5 @@ $resultado_pedidos = $conexion->query($sql_pedidos);
 </html>
 
 <?php
-$conexion->close(); // Cierra la conexión a la base de datos al final del script
+mysqli_close($conn); // Cierra la conexión a la base de datos al final del script
 ?>

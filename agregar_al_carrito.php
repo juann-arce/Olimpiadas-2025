@@ -1,6 +1,9 @@
 <?php
 session_start();
 
+// Incluye tu archivo de conexión a la base de datos
+include 'conexion.php'; // <--- AÑADIDO ESTO
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_reserva']) && isset($_POST['cantidad'])) {
     $id_reserva = (int)$_POST['id_reserva'];
     $cantidad = (int)$_POST['cantidad'];
@@ -9,20 +12,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_reserva']) && isse
         $cantidad = 1;
     }
 
-    // Conexión a la base de datos
-    $conexion = new mysqli("localhost", "root", "", "agencia");
-    if ($conexion->connect_error) {
-        die("Error de conexión: " . $conexion->connect_error);
-    }
+    // No necesitas la conexión de mysqli aquí, ya la tienes de include 'conexion.php';
+    // if ($conexion->connect_error) { ... } // Esto se maneja en conexion.php
 
     // Validar que el paquete existe
-    $stmt = $conexion->prepare("SELECT nombre, precio FROM paquetes WHERE ID_Reserva = ?");
-    $stmt->bind_param("i", $id_reserva);
-    $stmt->execute();
-    $resultado = $stmt->get_result();
+    $stmt = mysqli_prepare($conn, "SELECT nombre, precio FROM paquetes WHERE ID_Reserva = ?"); // <--- USANDO $conn
+    mysqli_stmt_bind_param($stmt, "i", $id_reserva); // <--- USANDO mysqli_stmt_bind_param
+    mysqli_stmt_execute($stmt); // <--- USANDO mysqli_stmt_execute
+    $resultado = mysqli_stmt_get_result($stmt); // <--- USANDO mysqli_stmt_get_result
 
-    if ($resultado->num_rows === 1) {
-        $paquete = $resultado->fetch_assoc();
+    if (mysqli_num_rows($resultado) === 1) { // <--- USANDO mysqli_num_rows
+        $paquete = mysqli_fetch_assoc($resultado); // <--- USANDO mysqli_fetch_assoc
 
         // Inicializar carrito si no existe
         if (!isset($_SESSION['carrito'])) {
@@ -41,21 +41,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_reserva']) && isse
             ];
         }
 
-        $stmt->close();
-        $conexion->close();
+        mysqli_stmt_close($stmt); // <--- USANDO mysqli_stmt_close
+        mysqli_close($conn); // <--- IMPORTANTE: Cierra la conexión al final del script
 
         // Redirigir a la página del carrito
         header("Location: carrito.php");
         exit();
     } else {
         // Paquete no encontrado, redirigir a paquetes con error (podés mejorar esto)
-        $stmt->close();
-        $conexion->close();
-        header("Location: paquetes.php?error=paquete_no_encontrado");
+        mysqli_stmt_close($stmt); // <--- USANDO mysqli_stmt_close
+        mysqli_close($conn); // <--- IMPORTANTE: Cierra la conexión al final del script
+        header("Location: index.php?error=paquete_no_encontrado"); // Cambié a index.php ya que 'paquetes.php' no fue proporcionado
         exit();
     }
 } else {
-    // Datos incompletos, redirigir a paquetes
-    header("Location: paquetes.php");
+    // Datos incompletos, redirigir a la página principal
+    mysqli_close($conn); // <--- IMPORTANTE: Cierra la conexión al final del script, incluso si no se usó mucho
+    header("Location: index.php?error=datos_incompletos"); // Cambié a index.php
     exit();
 }
+?>

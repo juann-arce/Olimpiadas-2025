@@ -9,23 +9,20 @@ if (!isset($_SESSION['usuario_id']) || $_SESSION['usuario_rol'] !== 'admin') {
 }
 
 // Conexión a la base de datos
-$conexion = new mysqli("localhost", "root", "", "agencia");
-if ($conexion->connect_error) {
-    die("Conexión fallida: " . $conexion->connect_error);
-}
+include 'conexion.php'; // <--- AÑADIDO ESTO (Ahora $conn está disponible)
 
 // Obtener todos los usuarios de la base de datos
-$sql = "SELECT ID_Usuario, nombre, apellido, email, documento, telefono, rol FROM usuario ORDER BY ID_Usuario ASC"; //
-$resultado = $conexion->query($sql);
+$sql = "SELECT ID_Usuario, nombre, apellido, email, documento, telefono, rol FROM usuario ORDER BY ID_Usuario ASC";
+$resultado = mysqli_query($conn, $sql); // <--- USANDO mysqli_query($conn, ...)
 
 $usuarios = [];
-if ($resultado->num_rows > 0) {
-    while ($fila = $resultado->fetch_assoc()) {
+if (mysqli_num_rows($resultado) > 0) { // <--- USANDO mysqli_num_rows
+    while ($fila = mysqli_fetch_assoc($resultado)) { // <--- USANDO mysqli_fetch_assoc
         $usuarios[] = $fila;
     }
 }
 
-$conexion->close();
+mysqli_close($conn); // <--- Cierra la conexión a la base de datos al final del script
 ?>
 
 <!DOCTYPE html>
@@ -56,7 +53,7 @@ $conexion->close();
                 <ul class="navbar-nav ms-auto">
                     <?php if (isset($_SESSION['usuario_rol']) && $_SESSION['usuario_rol'] === 'admin'): ?>
                         <li class="nav-item"><a class="nav-link" href="gestion_pedidos.php">Gestión Pedidos</a></li>
-                        <li class="nav-item"><a class="nav-link" href="logout.php">Cerrar Sesión (Admin)</a></li>
+                        <li class="nav-item"><a class="nav-link" href="agregar_paquete.php">Agregar Producto</a></li> <li class="nav-item"><a class="nav-link" href="index.php">Inicio</a></li> <li class="nav-item"><a class="nav-link" href="logout.php">Cerrar Sesión (Admin)</a></li>
                     <?php elseif (isset($_SESSION['usuario_id'])): ?>
                         <li class="nav-item"><a class="nav-link" href="carrito.php">Carrito</a></li>
                         <li class="nav-item"><a class="nav-link" href="pedidos.php">Mis Pedidos</a></li>

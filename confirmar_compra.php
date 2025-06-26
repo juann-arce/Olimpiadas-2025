@@ -19,40 +19,33 @@ if (empty($carrito)) {
 }
 
 // 2. Conexión a la base de datos
-$conexion = new mysqli("localhost", "root", "", "agencia");
-if ($conexion->connect_error) {
-    // En un entorno de producción, podrías loguear el error y mostrar un mensaje genérico al usuario
-    die("Error de conexión a la base de datos: " . $conexion->connect_error);
-}
+include 'conexion.php'; // <--- AÑADIDO ESTO (Ahora $conn está disponible)
 
 // Iniciar una transacción para asegurar la atomicidad de la operación
-$conexion->begin_transaction();
+mysqli_begin_transaction($conn); // <--- USANDO mysqli_begin_transaction($conn)
 
 try {
     // 3. Verificar que el usuario existe en la tabla 'usuario' (seguridad y validación de FK)
     // Usamos prepared statement para mayor seguridad
-    $stmt_check_user = $conexion->prepare("SELECT ID_Usuario FROM usuario WHERE ID_Usuario = ?");
-    $stmt_check_user->bind_param("i", $usuario_id);
-    $stmt_check_user->execute();
-    $resultado_user = $stmt_check_user->get_result();
+    $stmt_check_user = mysqli_prepare($conn, "SELECT ID_Usuario FROM usuario WHERE ID_Usuario = ?"); // <--- USANDO $conn
+    mysqli_stmt_bind_param($stmt_check_user, "i", $usuario_id); // <--- USANDO mysqli_stmt_bind_param
+    mysqli_stmt_execute($stmt_check_user); // <--- USANDO mysqli_stmt_execute
+    $resultado_user = mysqli_stmt_get_result($stmt_check_user); // <--- USANDO mysqli_stmt_get_result
 
-    if ($resultado_user->num_rows === 0) {
+    if (mysqli_num_rows($resultado_user) === 0) { // <--- USANDO mysqli_num_rows
         throw new Exception("El usuario con ID $usuario_id no existe en la base de datos o es inválido.");
     }
-    $stmt_check_user->close();
+    mysqli_stmt_close($stmt_check_user); // <--- USANDO mysqli_stmt_close
 
     // 4. Calcular el total del pedido antes de insertarlo
-    // Esto es crucial si la tabla 'pedidos' tiene una columna 'total'
     $total_pedido = 0;
     foreach ($carrito as $id_reserva => $datos) {
-        // Necesitamos el precio actual del paquete desde la BD,
-        // ya que el precio en sesión podría no estar actualizado
-        $stmt_precio_paquete = $conexion->prepare("SELECT precio FROM paquetes WHERE ID_Reserva = ?");
-        $stmt_precio_paquete->bind_param("i", $id_reserva);
-        $stmt_precio_paquete->execute();
-        $resultado_precio = $stmt_precio_paquete->get_result();
-        $paquete_db = $resultado_precio->fetch_assoc();
-        $stmt_precio_paquete->close();
+        $stmt_precio_paquete = mysqli_prepare($conn, "SELECT precio FROM paquetes WHERE ID_Reserva = ?"); // <--- USANDO $conn
+        mysqli_stmt_bind_param($stmt_precio_paquete, "i", $id_reserva); // <--- USANDO mysqli_stmt_bind_param
+        mysqli_stmt_execute($stmt_precio_paquete); // <--- USANDO mysqli_stmt_execute
+        $resultado_precio = mysqli_stmt_get_result($stmt_precio_paquete); // <--- USANDO mysqli_stmt_get_result
+        $paquete_db = mysqli_fetch_assoc($resultado_precio); // <--- USANDO mysqli_fetch_assoc
+        mysqli_stmt_close($stmt_precio_paquete); // <--- USANDO mysqli_stmt_close
 
         if (!$paquete_db) {
             throw new Exception("El paquete con ID $id_reserva no fue encontrado en la base de datos.");
@@ -61,57 +54,51 @@ try {
     }
 
     // 5. Insertar el encabezado del pedido en la tabla 'pedidos'
-    // Asumiendo que 'total' y 'metodo_pago' se pueden añadir aquí o en un paso posterior
-    // También asumo que 'Estado' en 'pedidos' tiene un valor predeterminado como 'pendiente'
-    // Si 'Estado' no tiene default, debes especificarlo aquí: INSERT INTO pedidos (ID_Usuario, Fecha, Estado, total)
-    $stmt_pedido = $conexion->prepare("INSERT INTO pedidos (ID_Usuario, total, Fecha, Estado) VALUES (?, ?, NOW(), ?)"); // Agregado total, Fecha, Estado
-    // Si tu columna 'Estado' en 'pedidos' tiene un DEFAULT 'pendiente', puedes simplificar la consulta:
-    // $stmt_pedido = $conexion->prepare("INSERT INTO pedidos (ID_Usuario, total, Fecha) VALUES (?, ?, NOW())");
-    $estado_inicial = 'pendiente'; // Define el estado inicial del pedido
-    $stmt_pedido->bind_param("ids", $usuario_id, $total_pedido, $estado_inicial); // 'i' para int, 'd' para double/decimal, 's' para string
+    $stmt_pedido = mysqli_prepare($conn, "INSERT INTO pedidos (ID_Usuario, total, Fecha, Estado) VALUES (?, ?, NOW(), ?)"); // <--- USANDO $conn
+    $estado_inicial = 'pendiente'; 
+    mysqli_stmt_bind_param($stmt_pedido, "ids", $usuario_id, $total_pedido, $estado_inicial); // <--- USANDO mysqli_stmt_bind_param
 
-    if (!$stmt_pedido->execute()) {
-        throw new Exception("Error al guardar el pedido principal: " . $stmt_pedido->error);
+    if (!mysqli_stmt_execute($stmt_pedido)) { // <--- USANDO mysqli_stmt_execute
+        throw new Exception("Error al guardar el pedido principal: " . mysqli_error($conn)); // <--- USANDO mysqli_error($conn)
     }
-    $pedido_id = $stmt_pedido->insert_id; // Obtiene el ID del pedido recién insertado
-    $stmt_pedido->close();
+    $pedido_id = mysqli_insert_id($conn); // <--- USANDO mysqli_insert_id($conn)
+    mysqli_stmt_close($stmt_pedido); // <--- USANDO mysqli_stmt_close
 
     // 6. Insertar cada detalle del paquete en la tabla 'pedido_detalles'
-    $stmt_detalle = $conexion->prepare("INSERT INTO pedido_detalles (ID_Pedido, ID_Reserva, Cantidad) VALUES (?, ?, ?)");
+    $stmt_detalle = mysqli_prepare($conn, "INSERT INTO pedido_detalles (ID_Pedido, ID_Reserva, Cantidad) VALUES (?, ?, ?)"); // <--- USANDO $conn
 
     foreach ($carrito as $id_reserva => $datos) {
-        $cantidad = (int)$datos['cantidad']; // Aseguramos que sea entero
-        // No necesitamos el precio unitario de venta aquí si ya lo hemos usado para calcular el total del pedido
-        // Pero si tu tabla pedido_detalles tuviera una columna 'precio_unitario_venta', deberías añadirla aquí
+        $cantidad = (int)$datos['cantidad']; 
 
-        $stmt_detalle->bind_param("iii", $pedido_id, $id_reserva, $cantidad);
-        if (!$stmt_detalle->execute()) {
-            throw new Exception("Error al guardar el detalle del paquete con ID_Reserva $id_reserva: " . $stmt_detalle->error);
+        mysqli_stmt_bind_param($stmt_detalle, "iii", $pedido_id, $id_reserva, $cantidad); // <--- USANDO mysqli_stmt_bind_param
+        if (!mysqli_stmt_execute($stmt_detalle)) { // <--- USANDO mysqli_stmt_execute
+            throw new Exception("Error al guardar el detalle del paquete con ID_Reserva $id_reserva: " . mysqli_error($conn)); // <--- USANDO mysqli_error($conn)
         }
     }
-    $stmt_detalle->close();
+    mysqli_stmt_close($stmt_detalle); // <--- USANDO mysqli_stmt_close
 
     // Si todo salió bien, confirmar la transacción
-    $conexion->commit();
+    mysqli_commit($conn); // <--- USANDO mysqli_commit($conn)
 
     // 7. Limpiar el carrito de la sesión
     unset($_SESSION['carrito']);
 
-    // 8. Redirigir a la página de pedidos con un mensaje de éxito
-    header("Location: pedidos.php?success=compra_confirmada");
+    // 8. Redirigir a la página de confirmación con un mensaje de éxito
+    header("Location: confirmacion_compra.php?status=success"); // Redirige a confirmacion_compra.php
     exit();
 
 } catch (Exception $e) {
     // Si algo falla, revertir la transacción
-    $conexion->rollback();
+    mysqli_rollback($conn); // <--- USANDO mysqli_rollback($conn)
 
-    // Puedes redirigir a una página de error o mostrar el mensaje
-    error_log("Error en confirmar_compra.php: " . $e->getMessage()); // Loguear el error para depuración
-    die("Ha ocurrido un error al procesar tu compra. Por favor, inténtalo de nuevo más tarde. Detalles: " . $e->getMessage());
+    // Loguear el error y redirigir a la página de confirmación con error
+    error_log("Error en confirmar_compra.php: " . $e->getMessage()); 
+    header("Location: confirmacion_compra.php?status=error"); // Redirige a confirmacion_compra.php
+    exit(); // Importante para detener la ejecución
 } finally {
     // Asegurarse de que la conexión se cierre
-    if ($conexion) {
-        $conexion->close();
+    if ($conn) { // <--- Verificar $conn
+        mysqli_close($conn); // <--- USANDO mysqli_close($conn)
     }
 }
 ?>
